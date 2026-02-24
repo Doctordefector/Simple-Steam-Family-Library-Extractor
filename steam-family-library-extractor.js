@@ -1,14 +1,36 @@
 (async () => {
   "use strict";
 
-  console.log("Starting Steam Family Library Extraction...");
-  console.log("Scrolling the page to load all games. Please keep this tab focused and wait...");
+  console.log("Loading your Steam Family library...");
 
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const libraryData = new Map();
 
+  // Ensure we start at the top
   window.scrollTo(0, 0);
   await delay(1000);
+
+  // --- NEW: Automatically click all "Show All" buttons ---
+  console.log("Looking for 'Show All' buttons to expand your lists...");
+  let clickedCount = 0;
+  
+  // We check every element on the page. If its exact text is "Show All" 
+  // and it's the deepest element (no children), we click it.
+  for (const el of document.querySelectorAll('*')) {
+    if (el.textContent.trim() === "Show All" && el.children.length === 0) {
+      el.click();
+      clickedCount++;
+    }
+  }
+
+  if (clickedCount > 0) {
+    console.log(`Successfully clicked ${clickedCount} "Show All" buttons! Waiting a moment for the games to load...`);
+    await delay(3000); // Give the page 3 seconds to fetch and render the expanded lists
+  } else {
+    console.log("No 'Show All' buttons found. They might already be expanded!");
+  }
+
+  console.log("Scrolling through the page. Just hang tight and keep this tab open.");
 
   const parseCurrentDOM = () => {
     const sectionEls = document.querySelectorAll("._1o7lKXffOJjZ_CpH1bHfY-");
@@ -40,15 +62,12 @@
         const isUnavailable = img.src.includes("defaultappimage") || !!tile.querySelector("._1tVCPhzTgmUpMpErm-4mHX");
         const badgeEl = tile.querySelector(".OchtG0jyJQXcr2o0t34q7");
         const owners = badgeEl ? parseInt(badgeEl.textContent, 10) || null : null;
-        const linkEl = tile.querySelector("a[href*='store.steampowered.com/app/']");
-        const storeUrl = linkEl?.href ?? null;
 
         if (!categoryData.games.has(name)) {
             categoryData.games.set(name, {
                 name,
                 ...(isUnavailable && { unavailable: true }),
                 ...(owners && { familyOwners: owners }),
-                ...(storeUrl && { storeUrl }),
             });
         }
       }
@@ -65,8 +84,8 @@
     
     if (!foundSections && previousTotal === 0) {
         console.error(
-          "No library sections found. Make sure you're on the Library tab:\n" +
-          "https://store.steampowered.com/account/familymanagement?tab=library"
+          "Couldn't find any games. Are you sure you're on the right page?\n" +
+          "Head to: https://store.steampowered.com/account/familymanagement?tab=library"
         );
         return;
     }
@@ -77,7 +96,7 @@
     }
 
     if (currentTotal > previousTotal) {
-        console.log(`Found ${currentTotal} games so far... scrolling down.`);
+        console.log(`Found ${currentTotal} games so far, still scrolling...`);
         previousTotal = currentTotal;
         unchangedScrolls = 0;
     } else {
@@ -94,7 +113,7 @@
     }
   }
   
-  console.log("Reached the bottom. Doing a final deep check to secure all games...");
+  console.log("Hit the bottom! Putting together your list...");
   window.scrollTo(0, document.body.scrollHeight);
   await delay(2000);
   parseCurrentDOM();
@@ -116,61 +135,50 @@
   }
 
   const accountName = document.title.replace("'s Account", "").replace("Steam Family", "").trim() || "SteamFamily";
+  const cleanAccountName = accountName.replace(/[^a-zA-Z0-9 ]/g, '').trim();
 
-  const report = {
-    account: accountName,
-    extractedAt: new Date().toISOString(),
-    totalGames: totalFound,
-    sections,
-  };
+  const d = new Date();
+  const displayDate = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  const fileDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
 
-  console.log("\nSteam Family Library - Extraction Complete");
-  console.log(`   Account:  ${report.account}`);
-  console.log(`   Total:    ${totalFound} games\n`);
+  let textOutput = `Steam Library: ${cleanAccountName}\n`;
+  textOutput += `Date: ${displayDate}\n`;
+  textOutput += `Total Games: ${totalFound}\n\n`;
 
   for (const s of sections) {
-    const mismatchWarning = s.found < s.declaredCount ? " (Some missing? Usually hidden or delisted games)" : "";
-    console.log(`   ${s.category}  (${s.found} / ${s.declaredCount} declared)${mismatchWarning}`);
-  }
-
-  console.log("\n-- Full Game List --");
-  for (const s of sections) {
-    console.groupCollapsed(`${s.category} (${s.found})`);
+    textOutput += `--- ${s.category.toUpperCase()} (${s.found} games) ---\n`;
     for (const g of s.games) {
-      const tags = [
-        g.unavailable ? "unavailable" : "",
-        g.familyOwners ? `owners: ${g.familyOwners}` : "",
-      ]
-        .filter(Boolean)
-        .join("  ");
-      console.log(`  ${g.name}${tags ? "  " + tags : ""}`);
+      const tags = [];
+      if (g.unavailable) tags.push("Unavailable");
+      if (g.familyOwners) tags.push(`Owners: ${g.familyOwners}`);
+      
+      const tagString = tags.length > 0 ? ` [${tags.join(" | ")}]` : "";
+      textOutput += `• ${g.name}${tagString}\n`;
     }
-    console.groupEnd();
+    textOutput += `\n`;
   }
 
-  const json = JSON.stringify(report, null, 2);
+  console.log("\nAll done!");
+  console.log(`Account: ${cleanAccountName}`);
+  console.log(`Total games found: ${totalFound}\n`);
 
   try {
-    await navigator.clipboard.writeText(json);
-    console.log("\nFull JSON copied to clipboard!");
+    await navigator.clipboard.writeText(textOutput);
+    console.log("Copied the formatted list to your clipboard!");
   } catch (e) {
-    console.log("\nClipboard copy failed - rely on the file download instead.");
+    console.log("Couldn't copy to clipboard, but the file download should work.");
   }
 
-  const blob = new Blob([json], { type: "application/json" });
+  const blob = new Blob([textOutput], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  const safeAccountName = report.account.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
   const a = Object.assign(document.createElement("a"), {
     href: url,
-    download: `steam-family-library_${safeAccountName}_${Date.now()}.json`,
+    download: `Library ${cleanAccountName} ${fileDate}.txt`,
   });
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
 
-  console.log("JSON file downloaded.");
-  console.log("\nTip: you can interactively explore the raw data object by typing __steamFamilyLibrary in the console.");
-
-  globalThis.__steamFamilyLibrary = report;
+  console.log("Downloaded your library text file.");
 })();
